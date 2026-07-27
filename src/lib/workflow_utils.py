@@ -25,6 +25,7 @@ from celery import group as celery_group
 from celery import signature
 from celery.app import Celery
 from celery.canvas import Signature
+from lib import celery_utils
 from sqlalchemy.orm import Session
 
 from api.v1 import schemas
@@ -90,7 +91,23 @@ def get_task_signature(
     Returns:
         Signature: The Celery task signature.
     """
-    task_uuid = task_data.get("uuid", uuid4().hex)
+    valid_tasks = celery_utils.get_registered_tasks(celery_app)
+    task_name = task_data.get("task_name")
+
+    # Searching for the relevant registered task_name
+    task_info = None
+    for valid_task in valid_tasks:
+        if valid_task.get("task_name") == task_name:
+            task_info = valid_task
+            break
+
+    if not task_info:
+        raise ValueError(f"Task name {task_name} is not allowed or not registered.")
+
+    task_uuid = uuid4().hex
+    task_data["uuid"] = task_uuid
+    queue_name = task_info.get("queue_name")
+
     task_config = {
         option["name"]: option.get("value")
         for option in task_data.get("task_config", {})
@@ -109,14 +126,14 @@ def get_task_signature(
     create_task_in_db(db, new_task_db)
 
     task_signature = signature(
-        task_data.get("task_name"),
+        task_name,
         kwargs={
             "input_files": input_files,
             "output_path": output_path,
             "workflow_id": workflow.id,
             "task_config": task_config,
         },
-        queue=task_data.get("queue_name"),
+        queue=queue_name,
         task_id=task_uuid,
     )
     return task_signature
